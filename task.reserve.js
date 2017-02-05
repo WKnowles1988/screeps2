@@ -1,6 +1,7 @@
 // This task will react on exploit, reserve and remotemine flags, sending a reserving creep to the flags position.
 let mod = {};
 module.exports = mod;
+mod.name = 'reserve';
 mod.creep = {
     reserver: {
         fixedBody: [CLAIM, CLAIM, MOVE, MOVE],
@@ -34,31 +35,19 @@ mod.handleFlagFound = flag => {
 };
 // check if a new creep has to be spawned
 mod.checkForRequiredCreeps = (flag) => {
-    const myName = _.find(Game.spawns).owner.username;
-    // Don't spawn if...
-    if( // Flag was removed
-        !flag || 
-        // No controller in room
-        !Room.isControllerRoom(flag.pos.roomName) ||  (flag.room && !flag.room.controller) || 
-        // My reservation is already sufficiently high or reserved by another player
-        (flag.room && flag.room.controller && flag.room.controller.reservation && (flag.room.controller.reservation.ticksToEnd > 2500 || flag.room.controller.reservation.username != myName) ) ||
-        // Room is owned
-        (flag.room && flag.room.controller && flag.room.controller.owner) )
-        return;
+    let spawnParamsHandler;
+    if( flag.color == FLAG_COLOR.claim.mining.color && flag.secondaryColor == FLAG_COLOR.claim.mining.secondaryColor ) {
+        spawnParamsHandler = Task.mining.strategies.reserve.spawnParams(flag);
+    }
+    if( !spawnParamsHandler ) spawnParamsHandler = mod.strategies.defaultStrategy.spawnParams;
+
+    let spawnParams = spawnParamsHandler(flag);
 
     // get task memory
     let memory = Task.reserve.memory(flag);
 
-    // count creeps assigned to task
-    let count = memory.queued.length + memory.spawning.length + memory.running.length;
-    
-    // check reservation level
-    let lowReservation = ( !flag.room ||
-            (flag.room.controller && !flag.room.controller.reservation) ||
-            (flag.room.controller && flag.room.controller.reservation && flag.room.controller.reservation.ticksToEnd < 250)); 
-    
     // if low & creep in low queue => move to medium queue
-    if( lowReservation && memory.queued.length == 1 ) {
+    if( spawnParams.queue !== 'Low' && memory.queued.length == 1 ) {
         let spawnRoom = Game.rooms[memory.queued[0].room];
         let elevate = (entry, index) => {
             if( entry.targetName == memory.queued[0].targetName ){
@@ -71,13 +60,16 @@ mod.checkForRequiredCreeps = (flag) => {
         spawnRoom.spawnQueueLow.find(elevate);
     }
 
-    // if creep count below requirement spawn a new creep creep 
-    if( count < 1 ) {
-        Task.reserve.creep.reserver.queue = lowReservation ? 'Medium' : 'Low';
+    // count creeps assigned to task
+    let count = memory.queued.length + memory.spawning.length + memory.running.length;
+
+    // if creep count below requirement spawn a new creep creep
+    if( count < spawnParams.count ) {
+        Task.reserve.creep.reserver.queue = spawnParams.queue;
         Task.spawn(
             Task.reserve.creep.reserver, // creepDefinition
             { // destiny
-                task: 'reserve', // taskName
+                task: mod.name, // taskName
                 targetName: flag.name, // targetName
             }, 
             { // spawn room selection params
@@ -98,7 +90,7 @@ mod.checkForRequiredCreeps = (flag) => {
 // when a creep starts spawning
 mod.handleSpawningStarted = params => { // params: {spawn: spawn.name, name: creep.name, destiny: creep.destiny}
     // ensure it is a creep which has been queued by this task (else return)    
-    if ( !params.destiny || !params.destiny.task || params.destiny.task != 'reserve' )
+    if ( !params.destiny || !params.destiny.task || params.destiny.task != mod.name )
         return;
     // get flag which caused queueing of that creep
     let flag = Game.flags[params.destiny.targetName];
@@ -114,7 +106,7 @@ mod.handleSpawningStarted = params => { // params: {spawn: spawn.name, name: cre
 // when a creep completed spawning
 mod.handleSpawningCompleted = creep => {
     // ensure it is a creep which has been requested by this task (else return)
-    if (!creep.data || !creep.data.destiny || !creep.data.destiny.task || creep.data.destiny.task != 'reserve')
+    if (!creep.data || !creep.data.destiny || !creep.data.destiny.task || creep.data.destiny.task != mod.name)
         return;
     // get flag which caused request of that creep
     let flag = Game.flags[creep.data.destiny.targetName];
@@ -136,7 +128,7 @@ mod.handleCreepDied = name => {
     // console.log('task.reserve.handleCreepDied(' + name + ")" );
     let mem = Memory.population[name];
     // ensure it is a creep which has been requested by this task (else return)
-    if (!mem || !mem.destiny || !mem.destiny.task || mem.destiny.task != 'reserve')
+    if (!mem || !mem.destiny || !mem.destiny.task || mem.destiny.task != mod.name)
         return;
     // get flag which caused request of that creep
     let flag = Game.flags[mem.destiny.targetName];
@@ -232,3 +224,38 @@ mod.validateMemory = memory => {
     Task.reserve.validateMemoryRunning(memory);
     memory.valid = Game.time;
 };
+mod.strategies = {
+    defaultStrategy: {
+        name: `default-${mod.name}`,
+        spawnParams: function(flag) { //:{count:number, priority:string}
+            let count = 1;
+
+            const myName = _.find(Game.spawns).owner.username;
+            // Don't spawn if...
+            const hasFlag = !!flag;
+            const hasController = Room.isControllerRoom(flag.pos.roomName) ||  (flag.room && !flag.room.controller);
+            const hasReservation = (flag.room && flag.room.controller && flag.room.controller.reservation && (flag.room.controller.reservation.ticksToEnd > 2500 || flag.room.controller.reservation.username != myName) );
+            const isOwned = (flag.room && flag.room.controller && flag.room.controller.owner);
+            if( // Flag was removed
+                !hasFlag ||
+                // No controller in room
+                !hasController ||
+                // My reservation is already sufficiently high or reserved by another player
+                hasReservation ||
+                // Room is owned
+                isOwned ) {
+                if( DEBUG && TRACE ) trace('Task', {hasFlag, hasController, hasReservation, isOwned, checkForRequiredCreeps:'skipping room', [mod.name]:'checkForRequiredCreeps', Task:mod.name});
+                count = 0;
+            }
+
+            // check reservation level
+            let lowReservation = (count > 0 && flag.room &&
+                ((flag.room.controller && !flag.room.controller.reservation) ||
+                (flag.room.controller && flag.room.controller.reservation && flag.room.controller.reservation.ticksToEnd < 250)));
+
+            const queue = lowReservation ? 'Medium' : 'Low';
+
+            return {count, queue};
+        },
+    },
+}

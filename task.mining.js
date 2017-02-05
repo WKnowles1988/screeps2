@@ -355,6 +355,21 @@ mod.strategies = {
     defaultStrategy: {
         name: `default-${mod.name}`,
     },
+    reserve: {
+        spawnParams: function(flag) {
+            const population = mod.carryPopulation(flag.pos.roomName);
+
+            if( population < 0.5 ) { // TODO look for high dropped energy count?
+                // TODO if this room & all exits are currently reserved (by anyone) then use default to prevent Invaders
+                if( DEBUG && TRACE ) trace('Task', {flagName:flag.name, pos:flag.pos, population, spawnParams:'population', [mod.name]:'spawnParams', Task:mod.name});
+                return function() { // TODO how to pass thru partial results?
+                    return {count: 0, priority: 'Low'};
+                };
+            }
+
+            // undefined means use defaults
+        }
+    },
     hauler: {
         name: `hauler-${mod.name}`,
         homeRoom: function(flagRoomName) {
