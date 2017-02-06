@@ -8,9 +8,24 @@ action.step = function(creep){
     if(CHATTY) creep.say(this.name, SAY_PUBLIC);
     if( creep.target ){
         let pos;
+        let targetRange = this.targetRange;
+        if( creep.target.id == creep.id) {
+            if( creep.data.travelPos ) {
+                pos = new RoomPosition(creep.data.travelPos.x, creep.data.travelPos.y, creep.data.travelPos.roomName);
+            } else if( !creep.data.travelRoom ) {
+                logError('no travel room', {creepName:creep.name, roomName:creep.room.name, Behaviour:creep.data.creepType, Action:'travelling'});
+            } else if( creep.room.getBorder(creep.data.travelRoom) ) {
+                logError('bad border target', {creepName:creep.name, roomName:creep.room.name, Behaviour:creep.data.creepType, Action:'travelling'});
+                targetRange = 24;
+                pos = new RoomPosition(25, 25, creep.data.travelRoom);
+            } else {
+                targetRange = 24;
+                pos = new RoomPosition(25, 25, creep.data.travelRoom);
+            }
+        }
         if( creep.target.id == creep.id ) pos = new RoomPosition(25, 25, creep.data.travelRoom);
         else pos = creep.target.pos;
-        creep.drive( pos, this.reachedRange, this.targetRange, Infinity );
+        creep.drive( pos, this.reachedRange, targetRange, Infinity );
     }
     if( !creep.target || creep.target.pos.roomName == creep.pos.roomName ){
         // unregister
